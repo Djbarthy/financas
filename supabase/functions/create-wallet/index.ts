@@ -25,6 +25,7 @@ Deno.serve(async (req) => {
     // Mapeia manualmente as chaves de camelCase para snake_case
     const { imageUrl, parentId, ...restOfWallet } = wallet;
     const walletForDb = {
+      id: crypto.randomUUID(),
       ...restOfWallet,
       ...(imageUrl && { image_url: imageUrl }),
       ...(parentId && { parent_id: parentId }),

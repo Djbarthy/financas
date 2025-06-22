@@ -144,7 +144,7 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     try {
-      const { data, error } = await supabase.functions.invoke('create-wallet', {
+      const { data: rawData, error } = await supabase.functions.invoke('create-wallet', {
         body: { wallet: walletPayload },
       });
 
@@ -153,7 +153,23 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         throw error;
       }
       
-      await dexieDB.wallets.add(data.wallet);
+      // Converte o objeto retornado (com snake_case) para o formato do app (camelCase)
+      const returnedWallet = rawData.wallet;
+      const wallet: Wallet = {
+          id: returnedWallet.id,
+          userId: returnedWallet.user_id,
+          name: returnedWallet.name,
+          balance: returnedWallet.balance || 0,
+          currency: returnedWallet.currency || 'BRL',
+          createdAt: returnedWallet.created_at,
+          updatedAt: returnedWallet.updated_at,
+          parentId: returnedWallet.parent_id,
+          description: returnedWallet.description,
+          imageUrl: returnedWallet.image_url,
+          color: returnedWallet.color,
+      };
+
+      await dexieDB.wallets.add(wallet);
       toast.success("Carteira criada com sucesso!");
 
     } catch (e: any) {
