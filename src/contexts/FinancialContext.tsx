@@ -6,6 +6,7 @@ import { useAuth } from './AuthContext';
 import { supabaseService } from '@/integrations/supabase/services';
 import { dexieDB } from '@/services/dexie';
 import { toast } from 'sonner';
+import { supabase } from '@/lib/supabaseClient';
 
 interface FinancialContextType {
   wallets: Wallet[] | undefined;
@@ -158,13 +159,36 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const createTransaction = async (transactionData: Omit<Transaction, 'id' | 'createdAt' | 'updatedAt' | 'userId'>) => {
-    if (!user) throw new Error("Usuário não autenticado.");
-    const newTransaction: Transaction = {
-      ...transactionData, id: uuidv4(), userId: user.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    if (!user) {
+      toast.error("Você precisa estar logado para criar uma transação.");
+      return;
+    }
+
+    const transactionPayload = {
+      ...transactionData,
+      user_id: user.id, // A função espera snake_case
     };
-    await dexieDB.transactions.add(newTransaction);
-    await dexieDB.sync_queue.add({ action: 'upsert', table: 'transactions', payload: newTransaction, timestamp: newTransaction.updatedAt });
-    flushSyncQueue();
+
+    try {
+      const { data, error } = await supabase.functions.invoke('create-transaction', {
+        body: { transaction: transactionPayload },
+      });
+
+      if (error) {
+        toast.error("Erro ao criar transação: " + error.message);
+        throw error;
+      }
+      
+      // A função retorna a transação completa do banco. Adicionamos ao Dexie local.
+      await dexieDB.transactions.add(data.transaction);
+      toast.success("Transação criada com sucesso!");
+
+    } catch (e: any) {
+      console.error("Falha ao invocar a Edge Function 'create-transaction':", e);
+      if (!e.message.includes("já existe")) {
+        toast.error("Não foi possível conectar ao servidor para criar a transação.");
+      }
+    }
   };
   
   const updateTransaction = async (id: string, updates: Partial<Transaction>) => {
