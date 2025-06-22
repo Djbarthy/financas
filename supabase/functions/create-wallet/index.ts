@@ -22,6 +22,14 @@ Deno.serve(async (req) => {
       throw new Error("Dados da carteira não encontrados no corpo da requisição.");
     }
 
+    // Mapeia manualmente as chaves de camelCase para snake_case
+    const { imageUrl, parentId, ...restOfWallet } = wallet;
+    const walletForDb = {
+      ...restOfWallet,
+      ...(imageUrl && { image_url: imageUrl }),
+      ...(parentId && { parent_id: parentId }),
+    };
+
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SERVICE_ROLE_KEY') ?? ''
@@ -29,7 +37,7 @@ Deno.serve(async (req) => {
 
     const { data, error } = await supabaseAdmin
       .from('wallets')
-      .insert(wallet)
+      .insert(walletForDb)
       .select()
       .single();
 
