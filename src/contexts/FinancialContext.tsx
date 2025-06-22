@@ -40,6 +40,55 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const loading = wallets === undefined || transactions === undefined;
 
   useEffect(() => {
+    const syncRemoteDataToLocal = async () => {
+      if (!user) return;
+
+      console.log('🔄 Sincronizando dados do servidor para o local...');
+      const toastId = 'initial-sync';
+      toast.info('Sincronizando seus dados...', { id: toastId });
+      
+      try {
+        const { wallets: remoteWallets, transactions: remoteTransactions } = await supabaseService.fetchAll();
+
+        if (remoteWallets) {
+          // O serviço já deve retornar os dados em camelCase, mas garantimos aqui
+          const walletsToStore = remoteWallets.map(w => ({
+            id: w.id,
+            userId: w.user_id || w.userId,
+            name: w.name,
+            balance: w.balance || 0,
+            currency: w.currency || 'BRL',
+            createdAt: w.created_at || w.createdAt,
+            updatedAt: w.updated_at || w.updatedAt,
+            parentId: w.parent_id || w.parentId,
+            description: w.description,
+            imageUrl: w.image_url || w.imageUrl,
+            color: w.color,
+          }));
+          await dexieDB.wallets.bulkPut(walletsToStore);
+        }
+
+        if (remoteTransactions) {
+          await dexieDB.transactions.bulkPut(remoteTransactions);
+        }
+
+        console.log('✅ Sincronização inicial concluída.');
+        toast.success('Dados sincronizados com sucesso!', { id: toastId });
+        
+        // Após a sincronização, tenta enviar qualquer item pendente na fila
+        flushSyncQueue();
+
+      } catch (error) {
+        console.error('❌ Falha na sincronização inicial:', error);
+        toast.error('Falha ao buscar seus dados.', { id: toastId });
+      }
+    };
+
+    syncRemoteDataToLocal();
+
+  }, [user]);
+
+  useEffect(() => {
     supabaseService.setUser(user);
   }, [user]);
 
