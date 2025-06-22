@@ -52,7 +52,7 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         if (remoteWallets) {
           // O serviço já deve retornar os dados em camelCase, mas garantimos aqui
-          const walletsToStore = remoteWallets.map(w => ({
+          const walletsToStore = remoteWallets.map((w: any) => ({
             id: w.id,
             userId: w.user_id || w.userId,
             name: w.name,
@@ -228,19 +228,87 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const updateWallet = async (id: string, updates: Partial<Wallet>) => {
-    const updatedWallet = { ...updates, updatedAt: new Date().toISOString() };
-    await dexieDB.wallets.update(id, updatedWallet);
-    const fullWallet = await dexieDB.wallets.get(id);
-    if (fullWallet) {
-      await dexieDB.sync_queue.add({ action: 'upsert', table: 'wallets', payload: fullWallet, timestamp: updatedWallet.updatedAt });
+    if (!user) {
+      toast.error("Você precisa estar logado para editar uma carteira.");
+      return;
     }
-    flushSyncQueue();
+
+    const originalWallet = await dexieDB.wallets.get(id);
+    if (!originalWallet) return;
+
+    // Aplica a atualização otimista na UI
+    const updatedWallet = { ...originalWallet, ...updates, updatedAt: new Date().toISOString() };
+    await dexieDB.wallets.put(updatedWallet);
+
+    try {
+      const { data: rawData, error } = await supabase.functions.invoke('update-wallet', {
+        body: { walletId: id, updates },
+      });
+
+      if (error) {
+        toast.error("Erro ao atualizar carteira: " + error.message);
+        await dexieDB.wallets.put(originalWallet); // Rollback
+        throw error;
+      }
+      
+      // Converte o retorno para camelCase e atualiza o Dexie com os dados do servidor
+      const returnedWallet = rawData.wallet;
+      const walletFromServer: Wallet = {
+          id: returnedWallet.id,
+          userId: returnedWallet.user_id,
+          name: returnedWallet.name,
+          balance: returnedWallet.balance,
+          currency: returnedWallet.currency,
+          createdAt: returnedWallet.created_at,
+          updatedAt: returnedWallet.updated_at,
+          parentId: returnedWallet.parent_id,
+          description: returnedWallet.description,
+          imageUrl: returnedWallet.image_url,
+          color: returnedWallet.color,
+      };
+      await dexieDB.wallets.put(walletFromServer);
+
+      toast.success("Carteira atualizada com sucesso!");
+
+    } catch (e: any) {
+      console.error("Falha ao invocar a Edge Function 'update-wallet':", e);
+      toast.error("Não foi possível conectar ao servidor para atualizar a carteira.");
+      await dexieDB.wallets.put(originalWallet); // Rollback
+    }
   };
 
-  const deleteWallet = async (id:string) => {
+  const deleteWallet = async (id: string) => {
+    if (!user) {
+      toast.error("Você precisa estar logado para deletar uma carteira.");
+      return;
+    }
+  
+    // Otimistamente remove da UI
+    const walletToDelete = await dexieDB.wallets.get(id);
+    if (!walletToDelete) return;
+    
     await dexieDB.wallets.delete(id);
-    await dexieDB.sync_queue.add({ action: 'delete', table: 'wallets', payload: { id }, timestamp: new Date().toISOString() });
-    flushSyncQueue();
+
+    try {
+      const { error } = await supabase.functions.invoke('delete-wallet', {
+        body: { walletId: id },
+      });
+
+      if (error) {
+        toast.error("Erro ao deletar carteira: " + error.message);
+        // Se a exclusão no servidor falhar, reverta a exclusão local
+        await dexieDB.wallets.add(walletToDelete);
+        throw error;
+      }
+      
+      toast.success("Carteira deletada com sucesso!");
+
+    } catch (e: any) {
+      console.error("Falha ao invocar a Edge Function 'delete-wallet':", e);
+      toast.error("Não foi possível conectar ao servidor para deletar a carteira.");
+      // Revertendo
+      await dexieDB.wallets.add(walletToDelete);
+    }
   };
 
   const createTransaction = async (transactionData: Omit<Transaction, 'id' | 'createdAt' | 'updatedAt' | 'userId'>) => {
@@ -255,7 +323,7 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     try {
-      const { data, error } = await supabase.functions.invoke('create-transaction', {
+      const { data: rawData, error } = await supabase.functions.invoke('create-transaction', {
         body: { transaction: transactionPayload },
       });
 
@@ -264,8 +332,22 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         throw error;
       }
       
-      // A função retorna a transação completa do banco. Adicionamos ao Dexie local.
-      await dexieDB.transactions.add(data.transaction);
+      const returnedTransaction = rawData.transaction;
+      const transaction: Transaction = {
+        id: returnedTransaction.id,
+        walletId: returnedTransaction.wallet_id,
+        userId: returnedTransaction.user_id,
+        type: returnedTransaction.type,
+        category: returnedTransaction.category,
+        amount: returnedTransaction.amount,
+        description: returnedTransaction.description,
+        date: returnedTransaction.date,
+        isPaid: returnedTransaction.is_paid,
+        createdAt: returnedTransaction.created_at,
+        updatedAt: returnedTransaction.updated_at,
+      };
+
+      await dexieDB.transactions.add(transaction);
       toast.success("Transação criada com sucesso!");
 
     } catch (e: any) {
@@ -277,19 +359,83 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
   
   const updateTransaction = async (id: string, updates: Partial<Transaction>) => {
-    const updatedTransaction = { ...updates, updatedAt: new Date().toISOString() };
-    await dexieDB.transactions.update(id, updatedTransaction);
-    const fullTransaction = await dexieDB.transactions.get(id);
-    if(fullTransaction) {
-        await dexieDB.sync_queue.add({ action: 'upsert', table: 'transactions', payload: fullTransaction, timestamp: updatedTransaction.updatedAt });
+    if (!user) {
+      toast.error("Você precisa estar logado para editar uma transação.");
+      return;
     }
-    flushSyncQueue();
+
+    const originalTransaction = await dexieDB.transactions.get(id);
+    if (!originalTransaction) return;
+
+    // Aplica a atualização otimista na UI
+    const updatedTransaction = { ...originalTransaction, ...updates, updatedAt: new Date().toISOString() };
+    await dexieDB.transactions.put(updatedTransaction);
+
+    try {
+      const { data: rawData, error } = await supabase.functions.invoke('update-transaction', {
+        body: { transactionId: id, updates },
+      });
+
+      if (error) {
+        toast.error("Erro ao atualizar transação: " + error.message);
+        await dexieDB.transactions.put(originalTransaction); // Rollback
+        throw error;
+      }
+      
+      const returnedTransaction = rawData.transaction;
+      const transactionFromServer: Transaction = {
+        id: returnedTransaction.id,
+        walletId: returnedTransaction.wallet_id,
+        userId: returnedTransaction.user_id,
+        type: returnedTransaction.type,
+        category: returnedTransaction.category,
+        amount: returnedTransaction.amount,
+        description: returnedTransaction.description,
+        date: returnedTransaction.date,
+        isPaid: returnedTransaction.is_paid,
+        createdAt: returnedTransaction.created_at,
+        updatedAt: returnedTransaction.updated_at,
+      };
+      await dexieDB.transactions.put(transactionFromServer);
+
+      toast.success("Transação atualizada com sucesso!");
+
+    } catch (e: any) {
+      console.error("Falha ao invocar a Edge Function 'update-transaction':", e);
+      toast.error("Não foi possível conectar ao servidor para atualizar a transação.");
+      await dexieDB.transactions.put(originalTransaction); // Rollback
+    }
   };
 
   const deleteTransaction = async (id: string) => {
+    if (!user) {
+      toast.error("Você precisa estar logado para deletar uma transação.");
+      return;
+    }
+
+    const transactionToDelete = await dexieDB.transactions.get(id);
+    if (!transactionToDelete) return;
+
     await dexieDB.transactions.delete(id);
-    await dexieDB.sync_queue.add({ action: 'delete', table: 'transactions', payload: { id }, timestamp: new Date().toISOString() });
-    flushSyncQueue();
+
+    try {
+      const { error } = await supabase.functions.invoke('delete-transaction', {
+        body: { transactionId: id },
+      });
+
+      if (error) {
+        toast.error("Erro ao deletar transação: " + error.message);
+        await dexieDB.transactions.add(transactionToDelete); // Rollback
+        throw error;
+      }
+      
+      toast.success("Transação deletada com sucesso!");
+
+    } catch (e: any) {
+      console.error("Falha ao invocar a Edge Function 'delete-transaction':", e);
+      toast.error("Não foi possível conectar ao servidor para deletar a transação.");
+      await dexieDB.transactions.add(transactionToDelete); // Rollback
+    }
   };
 
   const getWalletBalance = (walletId: string) => {

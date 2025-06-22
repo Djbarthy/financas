@@ -19,8 +19,20 @@ Deno.serve(async (req) => {
     const { transaction } = await req.json()
 
     if (!transaction) {
-      throw new Error("Missing transaction data in the request body.");
+      throw new Error("Dados da transação não encontrados no corpo da requisição.");
     }
+    
+    // Mapeia de camelCase para snake_case e gera um ID
+    const { walletId, userId, isPaid, createdAt, updatedAt, ...rest } = transaction;
+    const transactionForDb = {
+      id: crypto.randomUUID(), // Gera um novo ID
+      ...rest,
+      wallet_id: walletId,
+      user_id: userId,
+      is_paid: isPaid,
+      created_at: createdAt,
+      updated_at: updatedAt,
+    };
 
     // Crie um cliente Supabase com a role de serviço para ter privilégios de administrador
     const supabaseAdmin = createClient(
@@ -30,12 +42,12 @@ Deno.serve(async (req) => {
 
     const { data, error } = await supabaseAdmin
       .from('transactions')
-      .insert(transaction)
+      .insert(transactionForDb)
       .select()
       .single();
 
     if (error) {
-      console.error('Supabase error:', error);
+      console.error('Erro do Supabase:', error);
       throw error
     }
 
