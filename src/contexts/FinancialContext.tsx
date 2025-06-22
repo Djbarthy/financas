@@ -132,14 +132,34 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [wallets, activeWallet]);
 
-  const createWallet = async (walletData: Omit<Wallet, 'id' | 'createdAt' | 'updatedAt' | 'userId' | 'balance' | 'currency'>) => {
-    if (!user) throw new Error("Usuário não autenticado.");
-    const newWallet: Wallet = {
-      ...walletData, id: uuidv4(), userId: user.id, balance: 0, currency: 'BRL', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  const createWallet = async (walletData: Omit<Wallet, 'id' | 'createdAt' | 'updatedAt' | 'userId'>) => {
+    if (!user) {
+      toast.error("Você precisa estar logado para criar uma carteira.");
+      return;
+    }
+
+    const walletPayload = {
+      ...walletData,
+      user_id: user.id, // A função espera snake_case
     };
-    await dexieDB.wallets.add(newWallet);
-    await dexieDB.sync_queue.add({ action: 'upsert', table: 'wallets', payload: newWallet, timestamp: newWallet.updatedAt });
-    flushSyncQueue();
+
+    try {
+      const { data, error } = await supabase.functions.invoke('create-wallet', {
+        body: { wallet: walletPayload },
+      });
+
+      if (error) {
+        toast.error("Erro ao criar carteira: " + error.message);
+        throw error;
+      }
+      
+      await dexieDB.wallets.add(data.wallet);
+      toast.success("Carteira criada com sucesso!");
+
+    } catch (e: any) {
+      console.error("Falha ao invocar a Edge Function 'create-wallet':", e);
+      toast.error("Não foi possível conectar ao servidor para criar a carteira.");
+    }
   };
 
   const updateWallet = async (id: string, updates: Partial<Wallet>) => {
