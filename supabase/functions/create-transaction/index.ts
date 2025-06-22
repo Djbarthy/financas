@@ -25,7 +25,7 @@ Deno.serve(async (req) => {
     // Crie um cliente Supabase com a role de serviço para ter privilégios de administrador
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+      Deno.env.get('SERVICE_ROLE_KEY') ?? ''
     )
 
     const { data, error } = await supabaseAdmin
