@@ -60,55 +60,80 @@ const mapDbTransactionToApp = (dbTransaction: any): Transaction => ({
 export class SupabaseService {
   private user: User | null = null;
   
-  setUser(user: User | null) { this.user = user; }
+  setUser(user: User | null) { 
+    this.user = user;
+    console.log('🔑 Usuário definido no SupabaseService:', user?.id);
+  }
+
   private getUserId(): string {
-    if (!this.user) throw new Error("Usuário não está definido no SupabaseService.");
+    if (!this.user) {
+      console.error('❌ Tentativa de acessar getUserId sem usuário definido');
+      throw new Error("Usuário não está definido no SupabaseService. Por favor, faça login novamente.");
+    }
     return this.user.id;
   }
 
   async upsert(table: 'wallets' | 'transactions', data: any) {
-    const userId = this.getUserId();
-    let payload;
+    try {
+      const userId = this.getUserId();
+      let payload;
 
-    if (table === 'wallets') {
-      payload = mapAppWalletToDb(data);
-    } else {
-      payload = mapAppTransactionToDb(data);
-    }
-    
-    // Garante que o user_id esteja correto
-    payload.user_id = userId;
+      if (table === 'wallets') {
+        payload = mapAppWalletToDb(data);
+      } else {
+        payload = mapAppTransactionToDb(data);
+      }
+      
+      // Garante que o user_id esteja correto
+      payload.user_id = userId;
 
-    const { error } = await supabase.from(table).upsert(payload, { onConflict: 'id' });
-    if (error) {
-      console.error(`Erro no upsert da tabela ${table}:`, error);
+      const { error } = await supabase.from(table).upsert(payload, { onConflict: 'id' });
+      if (error) {
+        console.error(`❌ Erro no upsert da tabela ${table}:`, error);
+        throw error;
+      }
+      console.log(`✅ ${table} atualizado com sucesso`);
+    } catch (error) {
+      console.error(`❌ Erro ao fazer upsert em ${table}:`, error);
       throw error;
     }
   }
 
   async delete(table: 'wallets' | 'transactions', id: string) {
-    const { error } = await supabase.from(table).delete().eq('id', id);
-    if (error) {
-      console.error(`Erro ao deletar na tabela ${table}:`, error);
+    try {
+      const { error } = await supabase.from(table).delete().eq('id', id);
+      if (error) {
+        console.error(`❌ Erro ao deletar na tabela ${table}:`, error);
+        throw error;
+      }
+      console.log(`✅ ${table} deletado com sucesso`);
+    } catch (error) {
+      console.error(`❌ Erro ao deletar em ${table}:`, error);
       throw error;
     }
   }
 
   async fetchAll(): Promise<{ wallets: Wallet[], transactions: Transaction[] }> {
-    const userId = this.getUserId();
-    
-    const [walletsResult, transactionsResult] = await Promise.all([
-      supabase.from('wallets').select('*').eq('user_id', userId),
-      supabase.from('transactions').select('*').eq('user_id', userId)
-    ]);
+    try {
+      const userId = this.getUserId();
+      
+      const [walletsResult, transactionsResult] = await Promise.all([
+        supabase.from('wallets').select('*').eq('user_id', userId),
+        supabase.from('transactions').select('*').eq('user_id', userId)
+      ]);
 
-    if (walletsResult.error) throw walletsResult.error;
-    if (transactionsResult.error) throw transactionsResult.error;
+      if (walletsResult.error) throw walletsResult.error;
+      if (transactionsResult.error) throw transactionsResult.error;
 
-    const wallets = walletsResult.data.map(mapDbWalletToApp);
-    const transactions = transactionsResult.data.map(mapDbTransactionToApp);
+      const wallets = walletsResult.data.map(mapDbWalletToApp);
+      const transactions = transactionsResult.data.map(mapDbTransactionToApp);
 
-    return { wallets, transactions };
+      console.log(`✅ Dados carregados com sucesso: ${wallets.length} carteiras, ${transactions.length} transações`);
+      return { wallets, transactions };
+    } catch (error) {
+      console.error('❌ Erro ao buscar dados:', error);
+      throw error;
+    }
   }
 }
 

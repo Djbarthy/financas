@@ -27,6 +27,7 @@ import {
   Heart, 
   MoreHorizontal 
 } from 'lucide-react';
+import { toast } from 'react-hot-toast';
 
 interface TransactionFormProps {
   onClose: () => void;
@@ -76,26 +77,29 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onClose }) => {
     setFormData(prev => ({ ...prev, amount: onlyNumbers }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!activeWallet || !formData.amount || !formData.description) {
       return;
     }
 
-    // Fix date creation to maintain consistency
-    const selectedDate = new Date(formData.date + 'T12:00:00.000Z');
+    try {
+      await addTransaction({
+        walletId: activeWallet.id,
+        amount: parseFloat(formData.amount) / 100,
+        type: formData.type,
+        date: new Date(formData.date + 'T12:00:00.000Z'),
+        description: formData.description,
+        category: formData.category,
+        isPaid: true,
+      });
 
-    addTransaction({
-      walletId: activeWallet.id,
-      amount: parseFloat(formData.amount),
-      type: formData.type,
-      date: selectedDate,
-      description: formData.description,
-      category: formData.category,
-    });
-
-    onClose();
+      onClose();
+    } catch (error) {
+      console.error('Erro ao criar transação:', error);
+      toast.error('Não foi possível criar a transação. Tente novamente.');
+    }
   };
 
   const categories: TransactionCategory[] = [

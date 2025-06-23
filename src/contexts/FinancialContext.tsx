@@ -41,12 +41,14 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     const syncRemoteDataToLocal = async () => {
-      if (!user) return;
-
+      const toastId = 'sync-toast';
       console.log('🔄 Sincronizando dados do servidor para o local...');
-      const toastId = 'initial-sync';
-      toast.info('Sincronizando seus dados...', { id: toastId });
       
+      if (!user) {
+        console.log('⏳ Aguardando autenticação do usuário...');
+        return;
+      }
+
       try {
         const { wallets: remoteWallets, transactions: remoteTransactions } = await supabaseService.fetchAll();
 
@@ -89,7 +91,9 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [user]);
 
   useEffect(() => {
-    supabaseService.setUser(user);
+    if (user) {
+      supabaseService.setUser(user);
+    }
   }, [user]);
 
   const flushSyncQueue = useCallback(async () => {
