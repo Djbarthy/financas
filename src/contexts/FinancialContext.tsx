@@ -24,6 +24,7 @@ interface FinancialContextType {
   updateTransaction: (id: string, updates: Partial<Transaction>) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
   flushSyncQueue: () => Promise<void>;
+  addTransaction: (transactionData: Omit<Transaction, 'id' | 'createdAt' | 'updatedAt' | 'userId'>) => Promise<void>;
 }
 
 const FinancialContext = createContext<FinancialContextType | undefined>(undefined);
@@ -40,20 +41,17 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const loading = wallets === undefined || transactions === undefined;
 
   useEffect(() => {
+    if (!user) {
+      return;
+    }
+    supabaseService.setUser(user);
+
     const syncRemoteDataToLocal = async () => {
       const toastId = 'sync-toast';
       console.log('🔄 Sincronizando dados do servidor para o local...');
-      
-      if (!user) {
-        console.log('⏳ Aguardando autenticação do usuário...');
-        return;
-      }
-
       try {
         const { wallets: remoteWallets, transactions: remoteTransactions } = await supabaseService.fetchAll();
-
         if (remoteWallets) {
-          // O serviço já deve retornar os dados em camelCase, mas garantimos aqui
           const walletsToStore = remoteWallets.map((w: any) => ({
             id: w.id,
             userId: w.user_id || w.userId,
@@ -69,93 +67,20 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           }));
           await dexieDB.wallets.bulkPut(walletsToStore);
         }
-
         if (remoteTransactions) {
           await dexieDB.transactions.bulkPut(remoteTransactions);
         }
-
         console.log('✅ Sincronização inicial concluída.');
         toast.success('Dados sincronizados com sucesso!', { id: toastId });
-        
-        // Após a sincronização, tenta enviar qualquer item pendente na fila
         flushSyncQueue();
-
       } catch (error) {
         console.error('❌ Falha na sincronização inicial:', error);
         toast.error('Falha ao buscar seus dados.', { id: toastId });
       }
     };
-
     syncRemoteDataToLocal();
-
   }, [user]);
 
-  useEffect(() => {
-    if (user) {
-      supabaseService.setUser(user);
-    }
-  }, [user]);
-
-  const flushSyncQueue = useCallback(async () => {
-    if (!isOnline || syncing || !user) {
-      if (!isOnline) console.log('🚫 Offline, sincronização adiada.');
-      return;
-    }
-    
-    setSyncing(true);
-    const queue = await dexieDB.sync_queue.orderBy('timestamp').toArray();
-    
-    if (queue.length === 0) {
-      setSyncing(false);
-      return;
-    }
-
-    console.log('🔄 Verificando a fila de sincronização...');
-    toast.info('Sincronizando dados...', { id: 'sync-toast' });
-    
-    let initialQueueLength = queue.length;
-    let success = true;
-    
-    for (const item of queue) {
-      try {
-        if (item.action === 'upsert') {
-          await supabaseService.upsert(item.table, item.payload);
-        } else if (item.action === 'delete') {
-          await supabaseService.delete(item.table, item.payload.id);
-        }
-        await dexieDB.sync_queue.delete(item.id!);
-        console.log(`✅ Item #${item.id} (${item.action} em ${item.table}) sincronizado.`);
-      } catch (error) {
-        console.error(`❌ Falha ao sincronizar o item #${item.id}. Ele permanecerá na fila. Erro:`, error);
-        toast.error('Falha na sincronização. Verifique o console.', { id: 'sync-toast' });
-        success = false;
-        break;
-      }
-    }
-
-    if (success && initialQueueLength > 0) {
-      toast.success(`Sincronização concluída! ${initialQueueLength} itens processados.`, { id: 'sync-toast' });
-    }
-    
-    // A etapa abaixo foi removida para evitar que o estado local seja sobrescrito
-    // com dados potencialmente desatualizados do servidor, o que estava causando
-    // a percepção de que a sincronização não funcionava. A UI já é atualizada
-    // de forma otimista, e a sincronização agora foca em enviar as mudanças locais.
-    // console.log('☁️ Buscando dados mais recentes do servidor...');
-    // try {
-    //     const remoteData = await supabaseService.fetchAll();
-    //     if (remoteData.wallets) await dexieDB.wallets.bulkPut(remoteData.wallets);
-    //     if (remoteData.transactions) await dexieDB.transactions.bulkPut(remoteData.transactions);
-    //     console.log('✅ Banco de dados local atualizado com os dados do servidor.');
-    //     toast.success(`Sincronização concluída! ${initialQueueLength} itens processados.`, { id: 'sync-toast' });
-    // } catch (error) {
-    //     console.error('❌ Erro ao buscar dados do servidor:', error);
-    //     toast.error('Falha ao buscar dados do servidor.', { id: 'sync-toast' });
-    // }
-
-    setSyncing(false);
-  }, [syncing, user, isOnline]);
-  
   useEffect(() => {
     const handleOnline = () => {
       console.log('🟢 Dispositivo está online');
@@ -449,8 +374,83 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       .reduce((acc, t) => acc + (t.type === 'income' ? t.amount : -t.amount), 0);
   };
   
+  const flushSyncQueue = useCallback(async () => {
+    if (!isOnline || syncing || !user) {
+      if (!isOnline) console.log('🚫 Offline, sincronização adiada.');
+      return;
+    }
+    
+    setSyncing(true);
+    const queue = await dexieDB.sync_queue.orderBy('timestamp').toArray();
+    
+    if (queue.length === 0) {
+      setSyncing(false);
+      return;
+    }
+
+    console.log('🔄 Verificando a fila de sincronização...');
+    toast.info('Sincronizando dados...', { id: 'sync-toast' });
+    
+    let initialQueueLength = queue.length;
+    let success = true;
+    
+    for (const item of queue) {
+      try {
+        if (item.action === 'upsert') {
+          await supabaseService.upsert(item.table, item.payload);
+        } else if (item.action === 'delete') {
+          await supabaseService.delete(item.table, item.payload.id);
+        }
+        await dexieDB.sync_queue.delete(item.id!);
+        console.log(`✅ Item #${item.id} (${item.action} em ${item.table}) sincronizado.`);
+      } catch (error) {
+        console.error(`❌ Falha ao sincronizar o item #${item.id}. Ele permanecerá na fila. Erro:`, error);
+        toast.error('Falha na sincronização. Verifique o console.', { id: 'sync-toast' });
+        success = false;
+        break;
+      }
+    }
+
+    if (success && initialQueueLength > 0) {
+      toast.success(`Sincronização concluída! ${initialQueueLength} itens processados.`, { id: 'sync-toast' });
+    }
+    
+    // A etapa abaixo foi removida para evitar que o estado local seja sobrescrito
+    // com dados potencialmente desatualizados do servidor, o que estava causando
+    // a percepção de que a sincronização não funcionava. A UI já é atualizada
+    // de forma otimista, e a sincronização agora foca em enviar as mudanças locais.
+    // console.log('☁️ Buscando dados mais recentes do servidor...');
+    // try {
+    //     const remoteData = await supabaseService.fetchAll();
+    //     if (remoteData.wallets) await dexieDB.wallets.bulkPut(remoteData.wallets);
+    //     if (remoteData.transactions) await dexieDB.transactions.bulkPut(remoteData.transactions);
+    //     console.log('✅ Banco de dados local atualizado com os dados do servidor.');
+    //     toast.success(`Sincronização concluída! ${initialQueueLength} itens processados.`, { id: 'sync-toast' });
+    // } catch (error) {
+    //     console.error('❌ Erro ao buscar dados do servidor:', error);
+    //     toast.error('Falha ao buscar dados do servidor.', { id: 'sync-toast' });
+    // }
+
+    setSyncing(false);
+  }, [syncing, user, isOnline]);
+
   const value = {
-    wallets, transactions, activeWallet, loading, syncing, isOnline, setActiveWallet, getWalletBalance, createWallet, updateWallet, deleteWallet, createTransaction, updateTransaction, deleteTransaction, flushSyncQueue
+    wallets,
+    transactions,
+    activeWallet,
+    loading,
+    syncing,
+    isOnline,
+    setActiveWallet,
+    getWalletBalance,
+    createWallet,
+    updateWallet,
+    deleteWallet,
+    createTransaction,
+    updateTransaction,
+    deleteTransaction,
+    flushSyncQueue,
+    addTransaction: createTransaction,
   };
 
   return <FinancialContext.Provider value={value}>{children}</FinancialContext.Provider>;
